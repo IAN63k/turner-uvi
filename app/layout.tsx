@@ -29,6 +29,11 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <footer className="fixed bottom-0 left-0 w-full pointer-events-none py-2 text-center">
+          <span className="text-[10px] font-mono text-muted/40 tracking-wider select-none">
+            Turner v0.1.0 — UVI
+          </span>
+        </footer>
       </body>
     </html>
   );
