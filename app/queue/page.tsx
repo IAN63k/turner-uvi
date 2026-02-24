@@ -28,8 +28,24 @@ function QueueContent() {
   const [currentTicket, setCurrentTicket] = useState<number>(0)
   const [videoLink, setVideoLink] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default')
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(() => {
+    if (typeof window === 'undefined') return 'default'
+    if (!('Notification' in window) || typeof Notification.requestPermission !== 'function') {
+      return 'unsupported'
+    }
+
+    try {
+      return Notification.permission
+    } catch {
+      return 'unsupported'
+    }
+  })
   const notifiedRef = useRef(false)
+
+  const hasNotificationSupport =
+    typeof window !== 'undefined' &&
+    'Notification' in window &&
+    typeof Notification.requestPermission === 'function'
 
   // Fetch initial config
   useEffect(() => {
@@ -69,21 +85,19 @@ function QueueContent() {
     }
   }, [])
 
-  // Check notification permission
-  useEffect(() => {
-    if (!('Notification' in window)) {
-      setNotifPermission('unsupported')
-    } else {
-      setNotifPermission(Notification.permission)
-    }
-  }, [])
-
   const requestNotifications = useCallback(async () => {
-    if ('Notification' in window) {
+    if (!hasNotificationSupport) {
+      setNotifPermission('unsupported')
+      return
+    }
+
+    try {
       const permission = await Notification.requestPermission()
       setNotifPermission(permission)
+    } catch {
+      setNotifPermission('unsupported')
     }
-  }, [])
+  }, [hasNotificationSupport])
 
   // Fire notification when it's our turn
   const isMyTurn = ticketNumber > 0 && currentTicket === ticketNumber
@@ -91,10 +105,15 @@ function QueueContent() {
   useEffect(() => {
     if (isMyTurn && !notifiedRef.current && notifPermission === 'granted') {
       notifiedRef.current = true
-      new Notification('¡Es tu turno!', {
-        body: 'Únete a la videollamada ahora.',
-        icon: '/favicon.ico',
-      })
+
+      try {
+        new Notification('¡Es tu turno!', {
+          body: 'Únete a la videollamada ahora.',
+          icon: '/favicon.ico',
+        })
+      } catch {
+        // No-op: algunos navegadores móviles no permiten Notification constructor
+      }
     }
   }, [isMyTurn, notifPermission])
 
