@@ -1,13 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import type { QueueEntry, Attendance, AppConfig, UserRole } from '@/types'
+import type { QueueEntry, Attendance, AppConfig, UserRole, AttendanceType } from '@/types'
 import ConfirmModal from '@/app/components/ConfirmModal'
 import Spinner from '@/app/components/Spinner'
 
 type Tab = 'queue' | 'history'
+type ConfigTab = 'attendance' | 'none'
 
 export default function AdminDashboard() {
   const router = useRouter()
@@ -37,6 +38,15 @@ export default function AdminDashboard() {
   const [savingComment, setSavingComment] = useState(false)
   const [savingVideoLink, setSavingVideoLink] = useState(false)
 
+  // Attendance type state
+  const [attendanceType, setAttendanceType] = useState<AttendanceType>('virtual')
+  const [physicalLocation, setPhysicalLocation] = useState('')
+  const [physicalPhotos, setPhysicalPhotos] = useState<string[]>([])
+  const [savingAttendanceConfig, setSavingAttendanceConfig] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [configTab, setConfigTab] = useState<ConfigTab>('none')
+  const photoInputRef = useRef<HTMLInputElement>(null)
+
   // ----- AUTH CHECK -----
   useEffect(() => {
     const checkAuth = async () => {
@@ -57,6 +67,9 @@ export default function AdminDashboard() {
     if (data) {
       setConfig(data as AppConfig)
       setVideoLinkInput(data.video_link ?? '')
+      setAttendanceType(data.attendance_type ?? 'virtual')
+      setPhysicalLocation(data.physical_location ?? '')
+      setPhysicalPhotos(data.physical_photos ?? [])
     }
   }, [])
 
@@ -228,6 +241,56 @@ export default function AdminDashboard() {
     setSavingVideoLink(false)
   }
 
+  const handleSaveAttendanceConfig = async () => {
+    setSavingAttendanceConfig(true)
+    const updateData: Partial<AppConfig> = {
+      attendance_type: attendanceType,
+    }
+    if (attendanceType === 'virtual') {
+      updateData.video_link = videoLinkInput.trim()
+    } else {
+      updateData.physical_location = physicalLocation.trim()
+      updateData.physical_photos = physicalPhotos
+    }
+    await supabase.from('config').update(updateData).eq('id', 1)
+    setSavingAttendanceConfig(false)
+  }
+
+  const handleUploadPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || physicalPhotos.length >= 3) return
+    
+    setUploadingPhoto(true)
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+    const filePath = `attendance-photos/${fileName}`
+
+    const { error } = await supabase.storage
+      .from('public-assets')
+      .upload(filePath, file)
+
+    if (!error) {
+      const { data: urlData } = supabase.storage
+        .from('public-assets')
+        .getPublicUrl(filePath)
+      
+      const newPhotos = [...physicalPhotos, urlData.publicUrl]
+      setPhysicalPhotos(newPhotos)
+      
+      // Save immediately to DB
+      await supabase.from('config').update({ physical_photos: newPhotos }).eq('id', 1)
+    }
+    
+    setUploadingPhoto(false)
+    if (photoInputRef.current) photoInputRef.current.value = ''
+  }
+
+  const handleRemovePhoto = async (index: number) => {
+    const newPhotos = physicalPhotos.filter((_, i) => i !== index)
+    setPhysicalPhotos(newPhotos)
+    await supabase.from('config').update({ physical_photos: newPhotos }).eq('id', 1)
+  }
+
   const handleSaveComment = async (attendanceId: string) => {
     setSavingComment(true)
     await supabase
@@ -323,23 +386,17 @@ export default function AdminDashboard() {
 
             {/* Actions */}
             <div className="flex flex-col gap-3 sm:flex-row lg:items-center">
-              {/* Video link */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="url"
-                  value={videoLinkInput}
-                  onChange={(e) => setVideoLinkInput(e.target.value)}
-                  placeholder="Link de videollamada"
-                  className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-foreground placeholder:text-muted/50 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-64"
-                />
-                <button
-                  onClick={handleSaveVideoLink}
-                  disabled={savingVideoLink}
-                  className="shrink-0 rounded-xl bg-surface border border-border px-3 py-2.5 text-sm font-medium text-foreground hover:bg-card-hover transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {savingVideoLink ? '…' : '💾'}
-                </button>
-              </div>
+              {/* Attendance config toggle */}
+              <button
+                onClick={() => setConfigTab(configTab === 'attendance' ? 'none' : 'attendance')}
+                className={`rounded-xl px-4 py-2.5 text-sm font-medium border transition-all cursor-pointer ${
+                  configTab === 'attendance'
+                    ? 'bg-primary/10 border-primary text-primary'
+                    : 'bg-surface border-border text-foreground hover:bg-card-hover'
+                }`}
+              >
+                ⚙️ Tipo de atención
+              </button>
 
               {/* Next ticket button */}
               <button
@@ -351,6 +408,131 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
+
+          {/* Attendance Configuration Panel */}
+          {configTab === 'attendance' && (
+            <div className="mt-5 pt-5 border-t border-border animate-fade-in-up">
+              <div className="flex flex-col gap-4">
+                {/* Type selector */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium uppercase tracking-wider text-muted">
+                    Modalidad de atención
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setAttendanceType('virtual')}
+                      className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium border-2 transition-all cursor-pointer ${
+                        attendanceType === 'virtual'
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'border-border bg-surface text-muted hover:border-muted'
+                      }`}
+                    >
+                      🎥 Virtual
+                    </button>
+                    <button
+                      onClick={() => setAttendanceType('physical')}
+                      className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium border-2 transition-all cursor-pointer ${
+                        attendanceType === 'physical'
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'border-border bg-surface text-muted hover:border-muted'
+                      }`}
+                    >
+                      🏢 Presencial
+                    </button>
+                  </div>
+                </div>
+
+                {/* Virtual: Video link */}
+                {attendanceType === 'virtual' && (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium uppercase tracking-wider text-muted">
+                      Enlace de videollamada
+                    </label>
+                    <input
+                      type="url"
+                      value={videoLinkInput}
+                      onChange={(e) => setVideoLinkInput(e.target.value)}
+                      placeholder="https://meet.google.com/..."
+                      className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-foreground placeholder:text-muted/50 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                )}
+
+                {/* Physical: Location + Photos */}
+                {attendanceType === 'physical' && (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <label className="text-xs font-medium uppercase tracking-wider text-muted">
+                        Lugar de atención
+                      </label>
+                      <input
+                        type="text"
+                        value={physicalLocation}
+                        onChange={(e) => setPhysicalLocation(e.target.value)}
+                        placeholder="Ej: Oficina 302, Edificio Central..."
+                        className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-foreground placeholder:text-muted/50 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="text-xs font-medium uppercase tracking-wider text-muted">
+                        Fotos de orientación ({physicalPhotos.length}/3)
+                      </label>
+                      
+                      {/* Photo grid */}
+                      <div className="grid grid-cols-3 gap-3">
+                        {physicalPhotos.map((url, index) => (
+                          <div key={index} className="relative group aspect-video rounded-xl overflow-hidden bg-surface border border-border">
+                            <img
+                              src={url}
+                              alt={`Foto ${index + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              onClick={() => handleRemovePhoto(index)}
+                              className="absolute top-1 right-1 p-1 rounded-lg bg-danger text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        
+                        {physicalPhotos.length < 3 && (
+                          <label className="aspect-video rounded-xl border-2 border-dashed border-border bg-surface hover:border-primary hover:bg-primary/5 transition-colors cursor-pointer flex flex-col items-center justify-center gap-1">
+                            <input
+                              ref={photoInputRef}
+                              type="file"
+                              accept="image/*"
+                              onChange={handleUploadPhoto}
+                              className="hidden"
+                              disabled={uploadingPhoto}
+                            />
+                            {uploadingPhoto ? (
+                              <Spinner className="w-5 h-5 text-muted" />
+                            ) : (
+                              <>
+                                <span className="text-lg">📷</span>
+                                <span className="text-xs text-muted">Agregar</span>
+                              </>
+                            )}
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Save button */}
+                <button
+                  onClick={handleSaveAttendanceConfig}
+                  disabled={savingAttendanceConfig}
+                  className="self-end rounded-xl bg-success px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-success/20 transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                >
+                  {savingAttendanceConfig ? 'Guardando...' : '💾 Guardar configuración'}
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Tabs */}
