@@ -102,11 +102,14 @@ function QueueContent() {
     if (isMyTurn && !notifiedRef.current && notifPermission === 'granted') {
       notifiedRef.current = true
       new Notification('¡Es tu turno!', {
-        body: 'Únete a la videollamada ahora.',
+        body:
+          attendanceType === 'virtual'
+            ? 'Únete a la videollamada ahora.'
+            : `Dirígete a: ${physicalLocation || 'el lugar de atención'}`,
         icon: '/favicon.ico',
       })
     }
-  }, [isMyTurn, notifPermission])
+  }, [isMyTurn, notifPermission, attendanceType, physicalLocation])
 
   const peopleAhead = Math.max(0, ticketNumber - currentTicket - 1)
   const hasBeenServed = currentTicket > ticketNumber && ticketNumber > 0
