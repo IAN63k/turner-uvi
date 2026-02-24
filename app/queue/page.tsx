@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import type { AppConfig } from '@/types'
+import type { AppConfig, AttendanceType } from '@/types'
 import Spinner from '@/app/components/Spinner'
 
 export default function QueuePage() {
@@ -27,19 +27,12 @@ function QueueContent() {
 
   const [currentTicket, setCurrentTicket] = useState<number>(0)
   const [videoLink, setVideoLink] = useState<string>('')
+  const [attendanceType, setAttendanceType] = useState<AttendanceType>('virtual')
+  const [physicalLocation, setPhysicalLocation] = useState<string>('')
+  const [physicalPhotos, setPhysicalPhotos] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(() => {
-    if (typeof window === 'undefined') return 'default'
-    if (!('Notification' in window) || typeof Notification.requestPermission !== 'function') {
-      return 'unsupported'
-    }
-
-    try {
-      return Notification.permission
-    } catch {
-      return 'unsupported'
-    }
-  })
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>('default')
+  const [selectedPhoto, setSelectedPhoto] = useState<number | null>(null)
   const notifiedRef = useRef(false)
 
   const hasNotificationSupport =
@@ -52,13 +45,16 @@ function QueueContent() {
     const fetchConfig = async () => {
       const { data } = await supabase
         .from('config')
-        .select('current_ticket, video_link')
+        .select('current_ticket, video_link, attendance_type, physical_location, physical_photos')
         .eq('id', 1)
         .maybeSingle()
 
       if (data) {
         setCurrentTicket(data.current_ticket)
         setVideoLink(data.video_link)
+        setAttendanceType(data.attendance_type ?? 'virtual')
+        setPhysicalLocation(data.physical_location ?? '')
+        setPhysicalPhotos(data.physical_photos ?? [])
       }
       setLoading(false)
     }
@@ -76,6 +72,9 @@ function QueueContent() {
           const newConfig = payload.new as AppConfig
           setCurrentTicket(newConfig.current_ticket)
           setVideoLink(newConfig.video_link)
+          setAttendanceType(newConfig.attendance_type ?? 'virtual')
+          setPhysicalLocation(newConfig.physical_location ?? '')
+          setPhysicalPhotos(newConfig.physical_photos ?? [])
         }
       )
       .subscribe()
@@ -105,17 +104,15 @@ function QueueContent() {
   useEffect(() => {
     if (isMyTurn && !notifiedRef.current && notifPermission === 'granted') {
       notifiedRef.current = true
-
-      try {
-        new Notification('¡Es tu turno!', {
-          body: 'Únete a la videollamada ahora.',
-          icon: '/favicon.ico',
-        })
-      } catch {
-        // No-op: algunos navegadores móviles no permiten Notification constructor
-      }
+      new Notification('¡Es tu turno!', {
+        body:
+          attendanceType === 'virtual'
+            ? 'Únete a la videollamada ahora.'
+            : `Dirígete a: ${physicalLocation || 'el lugar de atención'}`,
+        icon: '/favicon.ico',
+      })
     }
-  }, [isMyTurn, notifPermission])
+  }, [isMyTurn, notifPermission, attendanceType, physicalLocation])
 
   const peopleAhead = Math.max(0, ticketNumber - currentTicket - 1)
   const hasBeenServed = currentTicket > ticketNumber && ticketNumber > 0
@@ -168,7 +165,9 @@ function QueueContent() {
                 ¡Es tu turno!
               </h1>
               <p className="mt-2 text-sm text-muted">
-                Ingresa a la videollamada para ser atendido.
+                {attendanceType === 'virtual' 
+                  ? 'Ingresa a la videollamada para ser atendido.'
+                  : 'Dirígete al lugar de atención.'}
               </p>
             </>
           ) : hasBeenServed ? (
@@ -196,24 +195,72 @@ function QueueContent() {
         {!hasBeenServed && (
           <div className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-sm animate-fade-in-up" style={{ animationDelay: '100ms' }}>
             {isMyTurn ? (
-              <div className="text-center">
-                {videoLink ? (
-                  <a
-                    href={videoLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 rounded-xl bg-success px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-success/25 transition-all hover:shadow-xl hover:shadow-success/30 active:scale-[0.98]"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polygon points="23 7 16 12 23 17 23 7" />
-                      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                    </svg>
-                    Unirse a la videollamada
-                  </a>
+              <div className="space-y-4">
+                {attendanceType === 'virtual' ? (
+                  /* Virtual attendance */
+                  <div className="text-center">
+                    {videoLink ? (
+                      <a
+                        href={videoLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl bg-success px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-success/25 transition-all hover:shadow-xl hover:shadow-success/30 active:scale-[0.98]"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polygon points="23 7 16 12 23 17 23 7" />
+                          <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                        </svg>
+                        Unirse a la videollamada
+                      </a>
+                    ) : (
+                      <p className="text-sm text-muted">
+                        El atencionista aún no ha configurado el enlace de videollamada.
+                      </p>
+                    )}
+                  </div>
                 ) : (
-                  <p className="text-sm text-muted">
-                    El atencionista aún no ha configurado el enlace de videollamada.
-                  </p>
+                  /* Physical attendance */
+                  <div className="space-y-4">
+                    {physicalLocation ? (
+                      <div className="text-center">
+                        <div className="inline-flex items-center gap-2 rounded-xl bg-accent/10 px-4 py-3 text-accent">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                            <circle cx="12" cy="10" r="3" />
+                          </svg>
+                          <span className="font-semibold">{physicalLocation}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted text-center">
+                        El atencionista aún no ha configurado el lugar de atención.
+                      </p>
+                    )}
+                    
+                    {/* Photo gallery */}
+                    {physicalPhotos.length > 0 && (
+                      <div className="space-y-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted text-center">
+                          Fotos de referencia
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {physicalPhotos.map((url, index) => (
+                            <button
+                              key={index}
+                              onClick={() => setSelectedPhoto(index)}
+                              className="aspect-video rounded-xl overflow-hidden bg-surface border border-border hover:border-primary transition-colors cursor-pointer"
+                            >
+                              <img
+                                src={url}
+                                alt={`Foto ${index + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (
@@ -293,6 +340,76 @@ function QueueContent() {
           </a>
         </p>
       </main>
+
+      {/* Photo Modal */}
+      {selectedPhoto !== null && physicalPhotos[selectedPhoto] && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-fade-in"
+          onClick={() => setSelectedPhoto(null)}
+        >
+          <div className="relative max-w-2xl w-full">
+            <button
+              onClick={() => setSelectedPhoto(null)}
+              className="absolute -top-12 right-0 p-2 text-white/80 hover:text-white transition-colors cursor-pointer"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+            <img
+              src={physicalPhotos[selectedPhoto]}
+              alt={`Foto ${selectedPhoto + 1}`}
+              className="w-full h-auto rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            {/* Navigation arrows */}
+            {physicalPhotos.length > 1 && (
+              <div className="absolute inset-y-0 left-0 right-0 flex items-center justify-between pointer-events-none">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSelectedPhoto((selectedPhoto - 1 + physicalPhotos.length) % physicalPhotos.length)
+                  }}
+                  className="pointer-events-auto -ml-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSelectedPhoto((selectedPhoto + 1) % physicalPhotos.length)
+                  }}
+                  className="pointer-events-auto -mr-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            {/* Indicators */}
+            {physicalPhotos.length > 1 && (
+              <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 flex gap-2">
+                {physicalPhotos.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedPhoto(i)
+                    }}
+                    className={`w-2 h-2 rounded-full transition-colors cursor-pointer ${
+                      i === selectedPhoto ? 'bg-white' : 'bg-white/40'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
