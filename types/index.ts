@@ -23,9 +23,14 @@ export interface Attendance {
   attended_at: string
 }
 
+export type AttendanceType = 'virtual' | 'physical'
+
 export interface AppConfig {
   id: 1
   current_ticket: number
   video_link: string
   last_reset_at: string
+  attendance_type: AttendanceType
+  physical_location: string | null
+  physical_photos: string[]
 }
